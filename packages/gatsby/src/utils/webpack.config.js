@@ -5,7 +5,6 @@ const crypto = require(`crypto`)
 const fs = require(`fs-extra`)
 const path = require(`path`)
 const dotenv = require(`dotenv`)
-const PnpWebpackPlugin = require(`pnp-webpack-plugin`)
 const { CoreJSResolver } = require(`./webpack/corejs-resolver`)
 const { store } = require(`../redux`)
 const { actions } = require(`../redux/actions`)
@@ -19,6 +18,7 @@ import { createWebpackUtils } from "./webpack-utils"
 import { hasLocalEslint } from "./local-eslint-config-finder"
 import { getAbsolutePathForVirtualModule } from "./gatsby-webpack-virtual-modules"
 import { StaticQueryMapper } from "./webpack/static-query-mapper"
+import { getBrowsersList } from "./browserslist"
 
 const FRAMEWORK_BUNDLES = [`react`, `react-dom`, `scheduler`, `prop-types`]
 
@@ -151,10 +151,7 @@ module.exports = async (
         return {
           path: directoryPath(`public`),
           filename: `render-page.js`,
-          libraryTarget: `umd`,
-          library: `lib`,
-          umdNamedDefine: true,
-          globalObject: `this`,
+          libraryTarget: `commonjs`,
           publicPath: withTrailingSlash(publicPath),
         }
       case `build-javascript`:
@@ -454,15 +451,7 @@ module.exports = async (
         ),
         $virtual: getAbsolutePathForVirtualModule(`$virtual`),
       },
-      plugins: [
-        // Those two folders are special and contain gatsby-generated files
-        // whose dependencies should be resolved through the `gatsby` package
-        PnpWebpackPlugin.bind(directoryPath(`.cache`), module),
-        PnpWebpackPlugin.bind(directoryPath(`public`), module),
-        // Transparently resolve packages via PnP when needed; noop otherwise
-        PnpWebpackPlugin,
-        new CoreJSResolver(),
-      ],
+      plugins: [new CoreJSResolver()],
     }
 
     const target =
@@ -504,9 +493,6 @@ module.exports = async (
 
     return {
       modules: [...root, path.join(__dirname, `../loaders`), `node_modules`],
-      // Bare loaders should always be loaded via the user dependencies (loaders
-      // configured via third-party like gatsby use require.resolve)
-      plugins: [PnpWebpackPlugin.moduleLoader(`${directory}/`)],
     }
   }
 
@@ -519,12 +505,6 @@ module.exports = async (
     module: getModule(),
     plugins: getPlugins(),
 
-    // Certain "isomorphic" packages have different entry points for browser
-    // and server (see
-    // https://github.com/defunctzombie/package-browser-field-spec); setting
-    // the target tells webpack which file to include, ie. browser vs main.
-    target: stage === `build-html` || stage === `develop-html` ? `node` : `web`,
-
     devtool: getDevtool(),
     // Turn off performance hints as we (for now) don't want to show the normal
     // webpack output anywhere.
@@ -535,6 +515,15 @@ module.exports = async (
 
     resolveLoader: getResolveLoader(),
     resolve: getResolve(stage),
+  }
+
+  if (stage === `build-html` || stage === `develop-html`) {
+    const [major, minor] = process.version.replace(`v`, ``).split(`.`)
+    config.target = `node${major}.${minor}`
+  } else {
+    config.target = `browserslist:${getBrowsersList(program.directory).join(
+      `,`
+    )}`
   }
 
   if (stage === `build-javascript`) {
@@ -633,8 +622,6 @@ module.exports = async (
       runtimeChunk: {
         name: `webpack-runtime`,
       },
-      // use hashes instead of ids for module identifiers
-      moduleIds: `deterministic`,
       splitChunks,
       minimizer: [
         // TODO: maybe this option should be noMinimize?
