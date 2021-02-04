@@ -33,6 +33,10 @@ interface IPluginResolution {
   options: IPluginInfoOptions
 }
 
+interface IPluginResolutionSSR extends IPluginResolution {
+  name: string
+}
+
 // If the env variable GATSBY_EXPERIMENTAL_FAST_DEV is set, enable
 // all DEV experimental changes (but only during development & not on CI).
 if (
@@ -550,9 +554,10 @@ export async function initialize({
 
   const isResolved = (plugin): plugin is IPluginResolution => !!plugin.resolve
 
-  const ssrPlugins: Array<IPluginResolution> = flattenedPlugins
+  const ssrPlugins: Array<IPluginResolutionSSR> = flattenedPlugins
     .map(plugin => {
       return {
+        name: plugin.name,
         resolve: hasAPIFile(`ssr`, plugin),
         options: plugin.pluginOptions,
       }
@@ -593,6 +598,7 @@ export async function initialize({
     .map(
       plugin =>
         `{
+      name: '${plugin.name}',
       plugin: require('${plugin.resolve}'),
       options: ${JSON.stringify(plugin.options)},
     }`
