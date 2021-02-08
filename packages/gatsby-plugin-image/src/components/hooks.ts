@@ -192,13 +192,13 @@ export function useGatsbyImage<OptionsType>({
 export function getMainProps(
   isLoading: boolean,
   isLoaded: boolean,
-  images: Pick<PictureProps, "sources" | "fallback" | "alt">,
+  images: IGatsbyImageData["images"],
   loading?: "eager" | "lazy",
   toggleLoaded?: (loaded: boolean) => void,
   cacheKey?: string,
   ref?: RefObject<HTMLImageElement>,
   style: CSSProperties = {}
-): MainImageProps {
+): Partial<MainImageProps> {
   const onLoad: ReactEventHandler<HTMLImageElement> = function (e) {
     if (isLoaded) {
       return
