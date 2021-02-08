@@ -158,7 +158,8 @@ const renderHTMLQueue = async (
   workerPool: IWorkerPool,
   activity: IActivity,
   htmlComponentRendererPath: string,
-  pages: Array<string>
+  pages: Array<string>,
+  stage: Stage
 ): Promise<void> => {
   // We need to only pass env vars that are set programmatically in gatsby-cli
   // to child process. Other vars will be picked up from environment.
@@ -170,18 +171,27 @@ const renderHTMLQueue = async (
 
   const segments = chunk(pages, 50)
 
+  const timestamp = Date.now()
+
+  const renderHTML =
+    stage === `build-html`
+      ? workerPool.renderHTMLProd
+      : workerPool.renderHTMLDev
+
   await Bluebird.map(segments, async pageSegment => {
-    await workerPool.renderHTML({
+    await renderHTML({
       envVars,
       htmlComponentRendererPath,
       paths: pageSegment,
+      timestamp,
     })
 
-    // is this code path used for dev ssr?
-    store.dispatch({
-      type: `HTML_GENERATED`,
-      payload: pageSegment,
-    })
+    if (stage === `build-html`) {
+      store.dispatch({
+        type: `HTML_GENERATED`,
+        payload: pageSegment,
+      })
+    }
 
     if (activity && activity.tick) {
       activity.tick(pageSegment.length)
@@ -210,10 +220,11 @@ export const doBuildPages = async (
   rendererPath: string,
   pagePaths: Array<string>,
   activity: IActivity,
-  workerPool: IWorkerPool
+  workerPool: IWorkerPool,
+  stage: Stage
 ): Promise<void> => {
   try {
-    await renderHTMLQueue(workerPool, activity, rendererPath, pagePaths)
+    await renderHTMLQueue(workerPool, activity, rendererPath, pagePaths, stage)
   } catch (error) {
     const prettyError = await createErrorFromString(
       error.stack,
@@ -240,7 +251,7 @@ export const buildHTML = async ({
   workerPool: IWorkerPool
 }): Promise<void> => {
   const rendererPath = await buildRenderer(program, stage, activity.span)
-  await doBuildPages(rendererPath, pagePaths, activity, workerPool)
+  await doBuildPages(rendererPath, pagePaths, activity, workerPool, stage)
   await deleteRenderer(rendererPath)
 }
 
@@ -278,7 +289,8 @@ export async function buildDirtyPagesAndDeleteStaleArtifacts({
       rendererPath,
       toRegenerate,
       buildHTMLActivityProgress,
-      workerPool
+      workerPool,
+      Stage.BuildHTML
     )
   } catch (err) {
     let id = `95313` // TODO: verify error IDs exist

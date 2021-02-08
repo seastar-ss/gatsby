@@ -553,6 +553,8 @@ export async function initialize({
   }
 
   const isResolved = (plugin): plugin is IPluginResolution => !!plugin.resolve
+  const isResolvedSSR = (plugin): plugin is IPluginResolutionSSR =>
+    !!plugin.resolve
 
   const ssrPlugins: Array<IPluginResolutionSSR> = flattenedPlugins
     .map(plugin => {
@@ -562,7 +564,7 @@ export async function initialize({
         options: plugin.pluginOptions,
       }
     })
-    .filter(isResolved)
+    .filter(isResolvedSSR)
 
   const browserPlugins: Array<IPluginResolution> = flattenedPlugins
     .map(plugin => {

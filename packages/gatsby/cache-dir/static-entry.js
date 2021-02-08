@@ -1,18 +1,12 @@
 const React = require(`react`)
-const fs = require(`fs`)
 const { join } = require(`path`)
 const { renderToString, renderToStaticMarkup } = require(`react-dom/server`)
 const { ServerLocation, Router, isRedirect } = require(`@reach/router`)
 const {
-  get,
   merge,
-  isObject,
-  flatten,
-  uniqBy,
+
   flattenDeep,
   replace,
-  concat,
-  memoize,
 } = require(`lodash`)
 const { StaticQueryContext } = require(`gatsby`)
 
@@ -22,13 +16,7 @@ const syncRequires = require(`$virtual/sync-requires`)
 const { version: gatsbyVersion } = require(`gatsby/package.json`)
 const { grabMatchParams } = require(`./find-path`)
 
-const stats = JSON.parse(
-  fs.readFileSync(`${process.cwd()}/public/webpack.stats.json`, `utf-8`)
-)
-
-const chunkMapping = JSON.parse(
-  fs.readFileSync(`${process.cwd()}/public/chunk-map.json`, `utf-8`)
-)
+const chunkMapping = require(`../public/chunk-map.json`)
 
 // const testRequireError = require("./test-require-error")
 // For some extremely mysterious reason, webpack adds the above module *after*
@@ -68,62 +56,11 @@ const getStaticQueryPath = hash => join(`page-data`, `sq`, `d`, `${hash}.json`)
 const getStaticQueryUrl = hash =>
   `${__PATH_PREFIX__}/${getStaticQueryPath(hash)}`
 
-const getPageData = pagePath => {
-  const pageDataPath = getPageDataPath(pagePath)
-  const absolutePageDataPath = join(process.cwd(), `public`, pageDataPath)
-  const pageDataRaw = fs.readFileSync(absolutePageDataPath)
+const getAppDataUrl = () =>
+  `${__PATH_PREFIX__}/${join(`page-data`, `app-data.json`)}`
 
-  try {
-    return JSON.parse(pageDataRaw.toString())
-  } catch (err) {
-    return null
-  }
-}
-
-// TODO: verify if memoization is safe given that results can change
-const getStaticQueryResult = memoize(hash => {
-  const staticQueryPath = getStaticQueryPath(hash)
-  const absoluteStaticQueryPath = join(process.cwd(), `public`, staticQueryPath)
-  const staticQueryRaw = fs.readFileSync(absoluteStaticQueryPath)
-
-  try {
-    return JSON.parse(staticQueryRaw.toString())
-  } catch (err) {
-    console.error(err)
-    return null
-  }
-})
-
-const appDataPath = join(`page-data`, `app-data.json`)
-
-const getAppDataUrl = memoize(() => {
-  let appData
-
-  try {
-    const absoluteAppDataPath = join(process.cwd(), `public`, appDataPath)
-    const appDataRaw = fs.readFileSync(absoluteAppDataPath)
-    appData = JSON.parse(appDataRaw.toString())
-
-    if (!appData) {
-      return null
-    }
-  } catch (err) {
-    return null
-  }
-
-  return `${__PATH_PREFIX__}/${appDataPath}`
-})
-
-const loadPageDataSync = pagePath => {
-  const pageDataPath = getPageDataPath(pagePath)
-  const pageDataFile = join(process.cwd(), `public`, pageDataPath)
-  try {
-    const pageDataJson = fs.readFileSync(pageDataFile)
-    return JSON.parse(pageDataJson)
-  } catch (error) {
-    // not an error if file is not found. There's just no page data
-    return null
-  }
+function loadPageDataSync() {
+  throw new Error(`"loadPageDataSync" is no longer available`)
 }
 
 const createElement = React.createElement
@@ -154,7 +91,15 @@ const ensureArray = components => {
   }
 }
 
-export default (pagePath, callback) => {
+export default ({
+  pagePath,
+  pageData,
+  staticQueryContext,
+  styles,
+  scripts,
+  reversedStyles,
+  reversedScripts,
+}) => {
   let bodyHtml = ``
   let headComponents = [
     <meta
@@ -217,21 +162,7 @@ export default (pagePath, callback) => {
     postBodyComponents = sanitizeComponents(components)
   }
 
-  const pageData = getPageData(pagePath)
-
-  const staticQueryContext = pageData.staticQueryHashes.reduce(
-    (staticQueryResults, staticQueryHash) => {
-      staticQueryResults[staticQueryHash] = getStaticQueryResult(
-        staticQueryHash
-      )
-      return staticQueryResults
-    },
-    {}
-  )
-
   const pageDataUrl = getPageDataUrl(pagePath)
-
-  const appDataUrl = getAppDataUrl()
 
   const { componentChunkName, staticQueryHashes = [] } = pageData
 
@@ -314,54 +245,6 @@ export default (pagePath, callback) => {
     }
   }
 
-  // Create paths to scripts
-  let scriptsAndStyles = flatten(
-    [`app`, componentChunkName].map(s => {
-      const fetchKey = `assetsByChunkName[${s}]`
-
-      let chunks = get(stats, fetchKey)
-      const namedChunkGroups = get(stats, `namedChunkGroups`)
-
-      if (!chunks) {
-        return null
-      }
-
-      chunks = chunks.map(chunk => {
-        if (chunk === `/`) {
-          return null
-        }
-        return { rel: `preload`, name: chunk }
-      })
-
-      namedChunkGroups[s].assets.forEach(asset =>
-        chunks.push({ rel: `preload`, name: asset })
-      )
-
-      const childAssets = namedChunkGroups[s].childAssets
-      for (const rel in childAssets) {
-        chunks = concat(
-          chunks,
-          childAssets[rel].map(chunk => {
-            return { rel, name: chunk }
-          })
-        )
-      }
-
-      return chunks
-    })
-  )
-    .filter(s => isObject(s))
-    .sort((s1, s2) => (s1.rel == `preload` ? -1 : 1)) // given priority to preload
-
-  scriptsAndStyles = uniqBy(scriptsAndStyles, item => item.name)
-
-  const scripts = scriptsAndStyles.filter(
-    script => script.name && script.name.endsWith(`.js`)
-  )
-  const styles = scriptsAndStyles.filter(
-    style => style.name && style.name.endsWith(`.css`)
-  )
-
   apiRunner(`onRenderBody`, {
     setHeadComponents,
     setHtmlAttributes,
@@ -377,20 +260,17 @@ export default (pagePath, callback) => {
     pathPrefix: __PATH_PREFIX__,
   })
 
-  scripts
-    .slice(0)
-    .reverse()
-    .forEach(script => {
-      // Add preload/prefetch <link>s for scripts.
-      headComponents.push(
-        <link
-          as="script"
-          rel={script.rel}
-          key={script.name}
-          href={`${__PATH_PREFIX__}/${script.name}`}
-        />
-      )
-    })
+  reversedScripts.forEach(script => {
+    // Add preload/prefetch <link>s for scripts.
+    headComponents.push(
+      <link
+        as="script"
+        rel={script.rel}
+        key={script.name}
+        href={`${__PATH_PREFIX__}/${script.name}`}
+      />
+    )
+  })
 
   if (pageData) {
     headComponents.push(
@@ -415,6 +295,7 @@ export default (pagePath, callback) => {
     )
   )
 
+  const appDataUrl = getAppDataUrl()
   if (appDataUrl) {
     headComponents.push(
       <link
@@ -427,37 +308,31 @@ export default (pagePath, callback) => {
     )
   }
 
-  styles
-    .slice(0)
-    .reverse()
-    .forEach(style => {
-      // Add <link>s for styles that should be prefetched
-      // otherwise, inline as a <style> tag
+  reversedStyles.forEach(style => {
+    // Add <link>s for styles that should be prefetched
+    // otherwise, inline as a <style> tag
 
-      if (style.rel === `prefetch`) {
-        headComponents.push(
-          <link
-            as="style"
-            rel={style.rel}
-            key={style.name}
-            href={`${__PATH_PREFIX__}/${style.name}`}
-          />
-        )
-      } else {
-        headComponents.unshift(
-          <style
-            data-href={`${__PATH_PREFIX__}/${style.name}`}
-            id={`gatsby-global-css`}
-            dangerouslySetInnerHTML={{
-              __html: fs.readFileSync(
-                join(process.cwd(), `public`, style.name),
-                `utf-8`
-              ),
-            }}
-          />
-        )
-      }
-    })
+    if (style.rel === `prefetch`) {
+      headComponents.push(
+        <link
+          as="style"
+          rel={style.rel}
+          key={style.name}
+          href={`${__PATH_PREFIX__}/${style.name}`}
+        />
+      )
+    } else {
+      headComponents.unshift(
+        <style
+          data-href={`${__PATH_PREFIX__}/${style.name}`}
+          id={`gatsby-global-css`}
+          dangerouslySetInnerHTML={{
+            __html: style.content,
+          }}
+        />
+      )
+    }
+  })
 
   // Add page metadata for the current page
   const windowPageData = `/*<![CDATA[*/window.pagePath="${pagePath}";/*]]>*/`
@@ -537,5 +412,5 @@ export default (pagePath, callback) => {
     />
   )}`
 
-  callback(null, html)
+  return html
 }
